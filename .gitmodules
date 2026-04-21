@@ -1,0 +1,16 @@
+[submodule "ACC-docs"]
+	path = ACC-docs
+	url = https://github.com/gaepo-japcho/ACC-docs.git
+	branch = main
+[submodule "ACC-autosar"]
+	path = ACC-autosar
+	url = https://github.com/gaepo-japcho/ACC-autosar.git
+	branch = main
+[submodule "ACC-Arduino"]
+	path = ACC-Arduino
+	url = https://github.com/gaepo-japcho/ACC-Arduino.git
+	branch = main
+[submodule "ACC-RPI"]
+	path = ACC-RPI
+	url = https://github.com/gaepo-japcho/ACC-RPI.git
+	branch = dev
