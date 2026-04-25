@@ -33,7 +33,7 @@ Three compute nodes talk over CAN @ 500 kbit/s. **진실의 원천 우선순위*
 
 Heartbeat 배치 (SYS025): 각 노드별 독립 `<NODE>_HEARTBEAT` 메시지 — `0x111 SENSOR_HEARTBEAT` (20ms), `0x310 MTR_HEARTBEAT` (10ms), `0x410 ECU_HEARTBEAT` (10ms, SAF018 ASIL-B). 모든 HB 메시지 공통 구조: `HB_<node>` (uint8 순환 카운터) + `ERR_<node>` (uint8, 0=Normal).
 
-- **Main ECU (MPC5606B, AUTOSAR Classic)**: ASW 응용 SWC 5개 (`AccStateMachine`, `DistanceControl`, `MotorControl`, `Diagnostics`, `HmiManager`). State machine: `OFF → STANDBY → CRUISING/FOLLOWING → FAULT`. **Cascaded 제어 (v0.6, 2026-04-23)**: `DistanceControl`(20ms, 바깥) 은 FOLLOWING 에서 거리 PID 로 `TargetSpeedCmS` 산출 (CRUISE 에선 `SetSpeedCmS` passthrough), `MotorControl`(10ms, 안쪽) 은 `TargetSpeedCmS` 와 `MTR_SPD_FB.GET_SPD_AVG`(대표 속도) 로 속도 PI (+ FF Lookup, 현재 FF=0) 를 수행해 PWM 출력 (SWR034, SAF008 클램핑). STANDBY 에서는 VEH_CTRL 의 `SET_ACCEL_PWM` (int8) 을 그대로 4륜에 pass-through (PI 적분기 리셋). **CAN I/O 는 응용 SWC 가 mobilgene Rte 를 통해 DBC 시그널과 직결** (Pattern B, 2026-04-25 `experiment/pattern-b-direct-com` 진행 중) — 구 `CanCommunication` 게이트웨이 SWC 는 폴더 보존 상태로 빌드에서 제외. AUTOSAR SWC 매핑은 `ACC-autosar/CLAUDE.md` + `ACC-autosar/RUNBOOK.md` (Pattern B 통합 진행 기록) 와 각 `create_swc_*.m` 헤더 주석 참조.
+- **Main ECU (MPC5606B, AUTOSAR Classic)**: ASW 응용 SWC 5개 (`AccStateMachine`, `DistanceControl`, `MotorControl`, `Diagnostics`, `HmiManager`). State machine: `OFF → STANDBY → CRUISING/FOLLOWING → FAULT`. **Cascaded 제어**: `DistanceControl`(20ms, 바깥) 은 FOLLOWING 에서 거리 PID 로 `TargetSpeedCmS` 산출 (CRUISE 에선 `SetSpeedCmS` passthrough), `MotorControl`(10ms, 안쪽) 은 `TargetSpeedCmS` 와 `MTR_SPD_FB.GET_SPD_AVG`(대표 속도) 로 속도 PI (+ FF Lookup, 현재 FF=0) 를 수행해 PWM 출력 (SWR034, SAF008 클램핑). STANDBY 에서는 VEH_CTRL 의 `SET_ACCEL_PWM` (int8) 을 그대로 4륜에 pass-through (PI 적분기 리셋). **CAN I/O 는 응용 SWC 가 mobilgene Rte 를 통해 DBC 시그널과 직결** — 별도 게이트웨이 SWC 없음. AUTOSAR SWC 매핑은 `ACC-autosar/CLAUDE.md` + `ACC-autosar/RUNBOOK.md` (mobilgene 통합 진행 기록) 와 각 `create_swc_*.m` 헤더 주석 참조.
 - **Arduino 2 보드 (acc_can_node + acc_motor_node)** 는 *dumb* motor controller. `acc_can_node` 는 CAN↔I2C 게이트웨이(MCP2515 + Wire Master), `acc_motor_node` 는 Motor Shield R3 ×2 스택 + 엔코더 1개(Wire Slave). I2C 분리 이유는 Arduino Uno 핀 충돌 (D10~D13 을 CAN SPI 와 모터쉴드가 동시 요구). DBC 4륜 PWM 은 `can_handler.cpp` 어댑터에서 L/R pair (avg) 로 축소 전달. 30 ms `MTR_CMD` 타임아웃 + 30 ms `ECU_HEARTBEAT` 타임아웃 → 모터 정지 safe state (SAF018 ASIL-B).
 - **Raspberry Pi 5 (SENSOR)** 가 HMI (PyQt5) + 센서 퓨전 (카메라 YOLO + RPLiDAR) + CAN 브릿지(python-can) 를 모두 담당. 퓨전이 RPi 쪽이라 ECU 는 필터링 없이 가공된 `VEH_DIST(mm)` + `VEH_DET` 만 수신. 현재 `acc_can/`, `acc_fusion/` 모듈은 실동작 코드가 들어와 있고 (과거 skeleton 상태 아님) `acc_hmi/` 와 공용 `common/`, `interfaces/` 모듈로 분리되어 있다.
 - **Requirements IDs** (`STK001`…`STK024`, `SYS001`…`SYS037`, `SWR001`…`SWR033`, `SAF001`…`SAF018`, `HWR001`…`HWR012`) are the traceability backbone — code comments reference them, and the AUTOSAR architecture doc maps them to SWCs/interfaces/data types. Preserve these IDs in comments when editing; don't invent new ones.
@@ -42,44 +42,20 @@ Heartbeat 배치 (SYS025): 각 노드별 독립 `<NODE>_HEARTBEAT` 메시지 —
 
 The `.slx` and `.sldd` files are binary **generated artifacts**. The `.m` scripts are the source of truth — re-generate rather than hand-editing the model.
 
-**Preferred: one-shot WSL rebuild** (as of 2026-04-23, all 6 SWCs pass `slbuild`):
+**Preferred: one-shot WSL rebuild** (5 SWC + Composition pass `slbuild`):
 
 ```bash
 cd /mnt/c/acc/ACC-autosar
-matlab.exe -batch "run('$(wslpath -w ./mbd/rebuild_all.m)')"
+make build       # matlab.exe -batch "run('.../mbd/rebuild_all.m')"
+make all         # build → flatten → import (mobilgene 자동 주입)
+make reimport    # 인터페이스 변경 후 빠른 재반영 (RUNBOOK §A1)
 ```
 
-`rebuild_all.m` turns on diary, cleans orphans (root `<SWC>.slx`, shadow `ACC_Types.sldd`, stale `slprj`), regenerates the dictionary, then runs `create_swc_* → map_swc_* → (build_logic_* for DistanceControl) → slbuild` for all 6 SWCs. Log lands at `mbd/build_log_YYYYMMDD_HHMMSS.txt`.
+`rebuild_all.m` turns on diary, cleans orphans (root `<SWC>.slx`, shadow `ACC_Types.sldd`, stale `slprj`), regenerates the dictionary, then runs `create_swc_* → map_swc_* → (build_logic_* / implement_fsm_*) → slbuild` for all 5 SWCs + Composition. Log lands at `mbd/build_log_YYYYMMDD_HHMMSS.txt`.
 
-**Per-SWC from MATLAB GUI** (required order):
+5 SWC: `AccStateMachine` (Stateflow FSM), `DistanceControl` (outer-loop 거리 PID, 20ms), `MotorControl` (inner-loop 속도 PI, 10ms), `Diagnostics` (현재 `Diag_Stub`), `HmiManager` (4 boolean BTN edge-detect). Composition: 5 prototype + 7 assembly connector (intra-ECU). DBC bus-binding 은 mobilgene Data Mappings UI 의 35 매핑으로 처리. `register_acc_autosar_datatypes.m` and `apply_acc_autosar_interfaces.m` are internal helpers — do not call directly. R2022a and earlier lack the required `autosar.api.create` APIs; R2025a may break `mapInport`/`mapOutport` signatures. Target MCU has no FPU — `float32_t` is only allowed inside PID/PI IRVs.
 
-```matlab
-cd ACC-autosar/mbd
-addpath(genpath(pwd))                     % root + all SWC subfolders
-
-build_acc_dictionary                      % Step 1: creates ACC_Types.sldd
-cd AccStateMachine
-create_swc_AccStateMachine                % Step 2A (auto-calls helpers)
-map_swc_AccStateMachine                   % Step 2B: Simulink ↔ AUTOSAR mapping
-slbuild('AccStateMachine')                % Step 2C: verify Rte_*.h/.c
-cd ..
-
-% DistanceControl has an extra logic-injection step:
-cd DistanceControl
-create_swc_DistanceControl
-map_swc_DistanceControl
-build_logic_DistanceControl               % ControlLogic MATLAB Function (PID)
-slbuild('DistanceControl')
-cd ..
-
-% Force rebuild after edits: create_swc_AccStateMachine('Force', true)
-```
-
-All 6 SWCs (`AccStateMachine`, `DistanceControl`, `HmiManager`, `Diagnostics`, `CanCommunication`, `MotorControl`) now build successfully. Inner logic status varies — Hmi/Diag are fully implemented in `create_swc_*`, `DistanceControl` has outer-loop 거리 PID (20ms) via `build_logic_DistanceControl.m` (gains are `TODO_TUNE`), `MotorControl` has inner-loop 속도 PI (10ms) via `build_logic_MotorControl.m` (gains `TODO_TUNE`, FF_Lookup=0 — 벤치 데이터 대기), and AccStateMachine/CanComm still ship skeletons that need Stateflow chart / CAN decode logic respectively. `register_acc_autosar_datatypes.m` and `apply_acc_autosar_interfaces.m` are internal helpers — do not call directly. R2022a and earlier lack the required `autosar.api.create` APIs; R2025a may break `mapInport`/`mapOutport` signatures. Target MCU has no FPU — `float32_t` is only allowed inside PID/PI IRVs.
-
-**Interface source of truth**: `apply_acc_autosar_interfaces.m` (SR/CS/MS definitions). Every `map_swc_*` / `build_logic_*` / `create_swc_*` DataElement name and type must match. v0.5.2 (2026-04-22) renamed `FwdDistanceCm(uint8)` → `FwdDistanceMm(uint16 mm, 0~12000, DBC VEH_DIST)`, dropped `RelVelocityCmS` from `IF_SensorData` (ECU internal), and dropped `TargetSpeedCmS` from `IF_MotorCmd`. **v0.6 (2026-04-23, cascaded)**: DC Provide Port 를 `PP_MotorCmd` → `PP_CtrlOutput` 로 복귀, MC 에 `RP_SensorData` 포트 추가 (EgoSpeedCmS inner PI feedback), MC inner-loop 속도 PI 도입 (SWR034). DC 주기 10ms → 20ms, MC 주기 10ms 유지.
-
-See `ACC-autosar/mbd/README.md` for the full SWR → dictionary mapping and troubleshooting table.
+**Interface source of truth**: `apply_acc_autosar_interfaces.m` (SR 13 = 8 bus-binding + 5 intra-ECU, CS 2, MS 1). Every `map_swc_*` / `build_logic_*` / `create_swc_*` DataElement name and type must match. SWR↔Dictionary 매핑 + 트러블슈팅 표는 `ACC-autosar/mbd/README.md`. mobilgene 통합 진행 절차/체크리스트는 `ACC-autosar/RUNBOOK.md`.
 
 ## Working in `ACC-Arduino/`
 
