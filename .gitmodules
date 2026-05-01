@@ -13,7 +13,7 @@
 [submodule "ACC-RPI"]
 	path = ACC-RPI
 	url = https://github.com/gaepo-japcho/ACC-RPI.git
-	branch = dev
+	branch = main
 [submodule "ACC-CANDB"]
 	path = ACC-CANDB
 	url = https://github.com/gaepo-japcho/ACC-CANDB.git
